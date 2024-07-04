@@ -7,6 +7,6 @@ dropdb:
 test:
 	go test -v -cover ./...
 server:
-	go run main.go
+	nodemon --exec go run main.go --signal SIGTERM
 
 .PHONY: server createdb dropdb test postgres

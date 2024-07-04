@@ -1,13 +1,14 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"paysyncevets/models"
 	"paysyncevets/utils"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
-
 
 type CreateUserRequest struct {
 	Username string `json:"username" validate:"required,min=3,max=50"`
@@ -15,8 +16,16 @@ type CreateUserRequest struct {
 	Email    string `json:"email" validate:"required,email"`
 	RoleName string `json:"role_name" validate:"required,oneof=ADMIN ARTIST PROMOTER NORMAL"`
 }
+type LoginRequest struct {
+    Identifier string `json:"identifier" validate:"required"` // Can be either username or email
+	Password string `json:"password" validate:"required"`
+}
 
-func  (server *Server) createUser(ctx *gin.Context){
+type loginUserResponse struct {
+	User models.User `json:"user"`
+}
+
+func (server *Server) createUser(ctx *gin.Context) {
 	var userRequest CreateUserRequest
 
 	// bind the request body to the userRequest
@@ -56,19 +65,68 @@ func  (server *Server) createUser(ctx *gin.Context){
 		return
 	}
 
-	// create the user depending on the role
-	if userRequest.RoleName == string(models.RoleArtist) {
-		artist := models.Artist{UserID: user.ID}
+	// depending on the type of user (admin, artist, promoter, normal)
+
+	switch userRequest.RoleName {
+	case string(models.RoleArtist):
+		// create artist
+		artist := models.Artist{
+			UserID:     user.ID,
+			ArtistName: userRequest.Username,
+			BookingFee: 100,
+		}
 		if err := server.db.Create(&artist).Error; err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create artist"})
+			ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 			return
 		}
-	} else if userRequest.RoleName == string(models.RolePromoter) {
-		promoter := models.Promoter{UserID: user.ID}
+	case string(models.RolePromoter):
+		// create promoter
+		promoter := models.Promoter{
+			UserID:      user.ID,
+			CompanyName: userRequest.Username,
+		}
 		if err := server.db.Create(&promoter).Error; err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create promoter"})
+			ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 			return
 		}
 	}
-	ctx.JSON(http.StatusCreated, gin.H{"user": user})
+
+	var createdUser models.User
+
+	if err := server.db.Where("id = ?", user.ID).First(&createdUser).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+	ctx.JSON(http.StatusCreated, gin.H{"user": createdUser})
+}
+
+
+func (server *Server) userLogin(ctx *gin.Context) {
+	var loginRequest LoginRequest
+	fmt.Println(loginRequest)
+
+	if err := ctx.ShouldBindJSON(&loginRequest); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorResponse(err))
+		return
+	}
+
+	// get user by username or email
+	var user models.User
+	if err := server.db.Where("email = ? OR username = ?", loginRequest.Identifier, loginRequest.Identifier).First(&user).Error; err != nil {
+        if err == gorm.ErrRecordNotFound {
+            ctx.JSON(http.StatusNotFound, gin.H{"error": "No user found with that email or username"})
+        } else {
+            ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query user"})
+        }
+        return
+    }
+	// check if password is correct
+	if err := utils.CheckPassword(loginRequest.Password, user.HashedPassword); err != nil {
+		ctx.JSON(http.StatusUnauthorized, errorResponse(err))
+		return
+	}
+	resp := loginUserResponse{
+		User: user,
+	}
+	ctx.JSON(http.StatusOK,resp)
 }

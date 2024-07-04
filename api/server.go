@@ -29,7 +29,8 @@ func (server *Server) setupRoutes() {
 	
 	//public routes
 
-	router.POST("/signup", server.createUser)
+	router.POST("/user/createUser", server.createUser)
+	router.POST("/user/login", server.userLogin)
 
 	// private routes
 
